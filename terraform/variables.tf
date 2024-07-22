@@ -1,11 +1,11 @@
-variable "region" {
-  description = "AWS region"
-  default     = "us-east-1"
+variable "domain_name" {
+  description = "domain name for service"
+  default     = "omoknooni.link"
 }
 
-variable "s3_bucket_name" {
-  description = "S3 bucket name for static hosting"
-  default     = "url.omoknooni.link"
+variable "subdomain_name" {
+  description = "subdomain name for service"
+  default = "s"
 }
 
 variable "lambda_role_name" {

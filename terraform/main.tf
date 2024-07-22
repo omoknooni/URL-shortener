@@ -1,10 +1,7 @@
-provider "aws" {
-  region = var.region
-}
-
 # S3 bucket
+# Need to upload frontend page code after the apply terraform
 resource "aws_s3_bucket" "static_site" {
-  bucket = var.s3_bucket_name
+  bucket = "${var.subdomain_name}.${var.domain_name}"
 
   tags = {
     Name = "URL Shortener Static Site"
@@ -86,11 +83,11 @@ resource "aws_iam_role_policy_attachment" "shortener" {
 
 # Lambda functions
 resource "aws_lambda_function" "shortener" {
-  filename         = "lambda/url-shorten.zip"
-  function_name    = "url-shortener-shortener"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "url-shortener.lambda_handler"
-  runtime          = "python3.12"
+  filename = "lambda/url-shorten.zip"
+  function_name = "url-shortener-shortener"
+  role = aws_iam_role.lambda_role.arn
+  handler = "url-shortener.lambda_handler"
+  runtime = "python3.12"
   source_code_hash = filebase64sha256("lambda/url-shorten.zip")
 
   environment {
@@ -101,11 +98,11 @@ resource "aws_lambda_function" "shortener" {
 }
 
 resource "aws_lambda_function" "redirecter" {
-  filename         = "lambda/url-redirect.zip"
-  function_name    = "url-shortener-redirecter"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "url-redirect.lambda_handler"
-  runtime          = "python3.12"
+  filename = "lambda/url-redirect.zip"
+  function_name = "url-shortener-redirecter"
+  role = aws_iam_role.lambda_role.arn
+  handler = "url-redirect.lambda_handler"
+  runtime = "python3.12"
   source_code_hash = filebase64sha256("lambda/url-redirect.zip")
   environment {
     variables = {
@@ -153,6 +150,9 @@ resource "aws_apigatewayv2_api" "http_api" {
         "OPTIONS",
         "POST",
     ]
+    allow_origins = [
+      "*"
+    ]
   }
 }
 
@@ -193,6 +193,12 @@ resource "aws_apigatewayv2_stage" "default_stage" {
   api_id      = aws_apigatewayv2_api.http_api.id
   name        = "$default"
   auto_deploy = true
+}
+
+# ACM in us-east-1 for CloudFront
+data "aws_acm_certificate" "issued" {
+  domain   = var.domain_name
+  statuses = ["ISSUED"]
 }
 
 # CloudFront Distribution
@@ -244,20 +250,41 @@ resource "aws_cloudfront_distribution" "distribution" {
   }
 
   enabled             = true
-  is_ipv6_enabled     = true
+  is_ipv6_enabled     = false
   comment             = "URL Shortener CloudFront Distribution"
   default_root_object = "index.html"
   aliases = [ "url.omoknooni.link" ]
 
+  # distribution의 geo_restriction
   restrictions {
     geo_restriction {
-      restriction_type = "none"
+      restriction_type = "whitelist"
+      locations        = ["KR"]
     }
   }
 
+  # distribution의 SSL 설정
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = false
+    acm_certificate_arn = data.aws_acm_certificate.issued.arn
+    minimum_protocol_version = "TLSv1.2_2021"
+    ssl_support_method = "sni-only"
   }
 }
 
 # Route53 hosted zone and record
+data "aws_route53_zone" "domain" {
+  name = var.domain_name
+}
+
+resource "aws_route53_record" "service-record" {
+  zone_id = data.aws_route53_zone.domain.zone_id
+  name = "${var.subdomain_name}.${var.domain_name}"
+  type = "A"
+
+  alias {
+    name = aws_cloudfront_distribution.distribution.domain_name
+    zone_id = aws_cloudfront_distribution.distribution.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
